@@ -38,25 +38,6 @@ pub struct Mnemosyne<T, E = Infallible> {
     refresh_fn: Box<dyn FnMut() -> Result<T, E>>,
 }
 
-#[derive(Debug)]
-pub enum MnemosyneError<E> {
-    ClosureError(E),
-}
-
-impl<E> std::fmt::Display for MnemosyneError<E> where E: std::error::Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MnemosyneError::ClosureError(e) => {
-                write!(
-                    f,
-                    "mnemosyne-internal update-function returned error (keeping old value): {}",
-                    e
-                )
-            }
-        }
-    }
-}
-
 impl<T: Clone, E> Mnemosyne<T, E> {
     /// Construct a new [`Mnemosyne<T, E>`] from an optional initial value `init`, with the specified
     /// value-persistence duration (refresh interval) and boxed computation (refresh function).
@@ -127,7 +108,7 @@ impl<T: Clone, E> Mnemosyne<T, E> {
     /// ```
     ///
     /// [`peek`]: Mnemosyne::peek
-    pub fn poll(&mut self) -> Result<T, MnemosyneError<E>> {
+    pub fn poll(&mut self) -> Result<T, E> {
         if let Some(ref mut container) = self.value {
             let elapsed = container.time_since_last_update();
             if elapsed >= self.refresh_interval {
@@ -138,7 +119,7 @@ impl<T: Clone, E> Mnemosyne<T, E> {
                         return Ok(new_contents);
                     }
                     Err(err) => {
-                        return Err(MnemosyneError::ClosureError(err));
+                        return Err(err);
                     }
                 }
             } else {
@@ -151,7 +132,7 @@ impl<T: Clone, E> Mnemosyne<T, E> {
                     self.value = Some(TimedContents::new(contents.clone()));
                     Ok(contents)
                 }
-                Err(e) => { Err(MnemosyneError::ClosureError(e)) }
+                Err(e) => Err(e),
             }
         }
     }
