@@ -32,10 +32,10 @@ impl<T> TimedContents<T> {
 ///
 /// Will not eagerly update, but rather recompute from the same closure if polled after the internal
 /// refresh period has elapsed.
-pub struct Mnemosyne<'a, T, E = Infallible> {
+pub struct Mnemosyne<T, E = Infallible> {
     value: Option<TimedContents<T>>,
     refresh_rate: chrono::Duration,
-    refresh_fn: Box<dyn FnMut() -> Result<T, E> + 'a>,
+    refresh_fn: Box<dyn FnMut() -> Result<T, E>>,
 }
 
 #[derive(Debug)]
@@ -64,18 +64,17 @@ impl<E> std::fmt::Display for MnemosyneError<E> where E: std::error::Error {
     }
 }
 
-impl<'a, T: Clone, E> Mnemosyne<'a, T, E> {
+impl<T: Clone, E> Mnemosyne<T, E> {
     /// Construct a new [`Mnemosyne<T, E>`] from an optional initial value `init`, with the specified
     /// stickiness duration and reusable computation.
-    pub fn new<F: 'a + FnMut() -> Result<T, E>>(
+    pub fn new(
         init: Option<T>,
         refresh_millis: u64,
-        f: F
+        f: Box<dyn FnMut() -> Result<T, E>>
     ) -> Self {
         let refresh_rate = chrono::Duration::milliseconds(refresh_millis as i64);
-        let refresh_fn = Box::new(f);
         let value = init.map(|x| TimedContents::new(x));
-        Self { value, refresh_rate, refresh_fn }
+        Self { value, refresh_rate, refresh_fn: f }
     }
 
     /// Returns, without modifying any state or blocking, the current value held, if available.
@@ -129,7 +128,7 @@ mod integration_tests {
     #[test]
     fn test_poll() {
         let mut x = 0;
-        let f = move || { let ret = x; x += 1; Ok(ret) };
+        let f = Box::new(move || { let ret = x; x += 1; Ok(ret) });
         let mut mnem : Mnemosyne<i32, Infallible> = Mnemosyne::new(Some(42), 2000, f);
         assert_eq!(mnem.peek(), Some(42));
         std::thread::sleep(std::time::Duration::from_millis(1000));
