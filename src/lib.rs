@@ -1,21 +1,22 @@
-extern crate chrono;
-
-use chrono::{ DateTime, Utc };
-use std::{ convert::Infallible };
+use std::convert::Infallible;
+use std::time::{Duration, Instant};
 
 pub(crate) struct TimedContents<T> {
     contents: T,
-    last_updated: DateTime<Utc>,
+    last_updated: Instant,
 }
 
 impl<T> TimedContents<T> {
     fn new(contents: T) -> Self {
-        let last_updated = chrono::Utc::now();
-        Self { contents, last_updated }
+        let last_updated = Instant::now();
+        Self {
+            contents,
+            last_updated,
+        }
     }
 
     fn replace_contents(&mut self, new_contents: T) -> () {
-        self.last_updated = chrono::Utc::now();
+        self.last_updated = Instant::now();
         self.contents = new_contents;
     }
 
@@ -23,8 +24,8 @@ impl<T> TimedContents<T> {
         &self.contents
     }
 
-    pub fn time_since_last_update(&self) -> chrono::Duration {
-        chrono::Utc::now() - self.last_updated
+    pub fn time_since_last_update(&self) -> Duration {
+        self.last_updated.elapsed()
     }
 }
 
@@ -34,7 +35,7 @@ impl<T> TimedContents<T> {
 /// refresh period has elapsed.
 pub struct Mnemosyne<T, E = Infallible> {
     value: Option<TimedContents<T>>,
-    refresh_interval: chrono::Duration,
+    refresh_interval: Duration,
     refresh_fn: Box<dyn FnMut() -> Result<T, E>>,
 }
 
@@ -45,9 +46,13 @@ impl<T: Clone, E> Mnemosyne<T, E> {
     /// The refresh interval is specified by the parameter `refresh_millis` as a number of milliseconds.
     /// If this value is zero, the closure will be called every time the value would be polled.
     pub fn new(init: Option<T>, refresh_millis: u64, f: Box<dyn FnMut() -> Result<T, E>>) -> Self {
-        let refresh_interval = chrono::Duration::milliseconds(refresh_millis as i64);
+        let refresh_interval = Duration::from_millis(refresh_millis);
         let value = init.map(|x| TimedContents::new(x));
-        Self { value, refresh_interval, refresh_fn: f }
+        Self {
+            value,
+            refresh_interval,
+            refresh_fn: f,
+        }
     }
 
     /// Returns a copy of the current value held by this [`Mnemosyne<T, E>`], if one exists.
@@ -77,7 +82,11 @@ impl<T: Clone, E> Mnemosyne<T, E> {
     /// assert_eq!(mem.peek(), Some(13));
     /// ```
     pub fn peek(&self) -> Option<T> {
-        if let Some(v) = &self.value { Some(v.get_contents().clone()) } else { None }
+        if let Some(v) = &self.value {
+            Some(v.get_contents().clone())
+        } else {
+            None
+        }
     }
 
     /// Polls the current value stored in this [`Mnemosyne<T, E>`] and updates it if it is determined to be out-of-date.
@@ -161,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_peek_same_as_last_poll() {
-        let mut countdown : u8 = 3;
+        let mut countdown: u8 = 3;
         let f = Box::new(move || {
             if countdown == 0 {
                 Err(())
