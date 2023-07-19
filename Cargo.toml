@@ -10,3 +10,7 @@ bench = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-trait = "0.1.71"
+futures = "0.3"
+tokio = { version = "1.29", features = ["rt", "macros", "time"] }
+tokio-util = "0.7"
