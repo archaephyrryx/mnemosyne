@@ -1,6 +1,6 @@
 [package]
 name = "mnemosyne"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [lib]
@@ -14,3 +14,6 @@ async-trait = "0.1.71"
 futures = "0.3"
 tokio = { version = "1.29", features = ["rt", "macros", "time"] }
 tokio-util = "0.7"
+
+[dev-dependencies]
+tokio-stream = "0.1"

@@ -1,40 +1,11 @@
+use std::pin::Pin;
+
 use futures::Future;
-use tokio::sync::Mutex;
 
-use async_trait::async_trait;
+pub trait AsyncClosure<'a, T, E> {
+    type Fut: Future<Output = Result<T, E>> + 'a;
 
-#[async_trait]
-pub trait AsyncClosure<T, E> {
-    async fn call(&mut self) -> Result<T, E>;
-}
-
-#[async_trait]
-impl<T, E, Fut> AsyncClosure<T, E> for AsyncFn<T, E, Fut>
-where
-    Fut: Future<Output = Result<T, E>> + Send + Sync,
-{
-    async fn call(&mut self) -> Result<T, E> {
-        (self._inner)().await
-    }
-}
-
-#[async_trait]
-impl<U, T, E, Fut> AsyncClosure<T, E> for AsyncFold<U, T, E, Fut>
-where
-    U: Send + Sync + 'static,
-    Fut: Future<Output = Result<T, E>> + Send,
-{
-    async fn call(&mut self) -> Result<T, E> {
-        let mut acc = self.acc.lock().await;
-        (self.f)(&mut acc).await
-    }
-}
-
-#[macro_export]
-macro_rules! async_fn {
-    ($x:expr) => {
-        $crate::sync::async_fn::AsyncFn::new($x)
-    };
+    fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut where 'c: 'a;
 }
 
 /// A wrapper around a closure that returns a [`Future`] and can be called more than once, with possible side-effects.
@@ -43,6 +14,13 @@ where
     Fut: Future<Output = Result<T, E>> + Send + Sync,
 {
     _inner: std::pin::Pin<Box<dyn (FnMut() -> Fut) + Sync + Send + 'static + Unpin>>,
+}
+
+#[macro_export]
+macro_rules! async_fn {
+    ($x:expr) => {
+        $crate::sync::async_fn::AsyncFn::new($x)
+    };
 }
 
 impl<T, E, Fut> AsyncFn<T, E, Fut>
@@ -60,35 +38,13 @@ where
     }
 }
 
-#[macro_export]
-macro_rules! async_fold {
-    ($x:expr, $f:expr) => {
-        $crate::sync::async_fn::AsyncFold::new($x, $f)
-    };
-}
-
-pub struct AsyncFold<U, T, E, Fut>
+impl<'a, 'b, T, E, Fut> AsyncClosure<'a, T, E> for AsyncFn<T, E, Fut>
 where
-    U: Send + Sync + 'static,
-    Fut: Future<Output = Result<T, E>>,
+    Fut: Future<Output = Result<T, E>> + Send + Sync + 'a,
 {
-    acc: Mutex<U>,
-    f: Box<dyn (FnMut(&mut U) -> Fut) + Send + 'static + Unpin>,
-}
+    type Fut = Fut;
 
-impl<U, T, E, Fut> AsyncFold<U, T, E, Fut>
-where
-    U: Send + Sync + 'static,
-    Fut: Future<Output = Result<T, E>>,
-{
-    pub fn new<F>(init: U, f: F) -> Self
-    where
-        F: FnMut(&mut U) -> Fut,
-        F: Send + 'static + Unpin,
-    {
-        Self {
-            acc: Mutex::new(init),
-            f: Box::new(f),
-        }
+    fn call<'c>(mut self: Pin<&'c mut Self>) -> Fut where 'c: 'a {
+        (self._inner)()
     }
 }

@@ -1,11 +1,11 @@
-use std::{convert::Infallible, marker::PhantomData, time::Duration};
+use std::{ convert::Infallible, marker::PhantomData, time::Duration, pin::Pin };
 
 use crate::common::TimedContents;
 
 pub mod async_fn;
 
-use async_fn::{AsyncClosure, AsyncFn};
-use futures::{future::BoxFuture, Future};
+use async_fn::{ AsyncClosure, AsyncFn };
+use futures::future::BoxFuture;
 
 pub type EverReady<T, E = Infallible> = futures::future::Ready<Result<T, E>>;
 
@@ -14,26 +14,17 @@ pub type EverReady<T, E = Infallible> = futures::future::Ready<Result<T, E>>;
 /// Will not eagerly update, but rather recompute from the same async closure if polled after the internal
 /// refresh period has elapsed.
 #[allow(clippy::module_name_repetitions)]
-pub struct MnemoSync<
-    T,
-    E = Infallible,
-    Fut = BoxFuture<'static, Result<T, E>>,
-    F = AsyncFn<T, E, Fut>,
-> where
-    Fut: Future<Output = Result<T, E>> + Send + Sync,
-{
+pub struct MnemoSync<T, E = Infallible, F = AsyncFn<T, E, BoxFuture<'static, Result<T, E>>>>
+    where E: 'static, F: for<'a> AsyncClosure<'a, T, E> {
     value: Option<TimedContents<T>>,
     refresh_interval: Duration,
     update: F,
-    _proxy: PhantomData<(E, Fut)>,
+    _proxy: PhantomData<E>,
 }
 
-impl<T: Clone, E, Fut, F> MnemoSync<T, E, Fut, F>
-where
-    Fut: Future<Output = Result<T, E>> + Send + Sync,
-{
+impl<T: Clone, E, F> MnemoSync<T, E, F> where E: 'static, F: for<'a> AsyncClosure<'a, T, E> + Unpin {
     /// Construct a new [`MnemoSync`] from an optional initial value `init`, with the specified
-    /// value-persistence duration (refresh interval) and update-stream.
+    /// value-persistence duration (refresh interval) and (async) update-closure.
     ///
     /// The refresh interval is specified by the parameter `refresh_millis` as a number of milliseconds.
     /// If this value is zero, the stream will be polled every time the inner value is requested.
@@ -113,14 +104,12 @@ where
     /// ```
     ///
     /// [`peek`]: MnemoSync::peek
-    pub async fn poll_async(&mut self) -> Result<T, E>
-    where
-        F: AsyncClosure<T, E>,
-    {
+    pub async fn poll_async(&mut self) -> Result<T, E> {
         if let Some(ref mut container) = self.value {
             let elapsed = container.time_since_last_update();
             if elapsed >= self.refresh_interval {
-                let res = self.update.call().await;
+                let f = Pin::new(&mut self.update);
+                let res = f.call().await;
                 match res {
                     Ok(new_contents) => {
                         container.replace_contents(new_contents.clone());
@@ -133,7 +122,8 @@ where
             }
             return Ok(container.get_contents().clone());
         }
-        let res = self.update.call().await;
+        let f = Pin::new(&mut self.update);
+        let res = f.call().await;
         match res {
             Ok(contents) => {
                 self.value = Some(TimedContents::new(contents.clone()));
@@ -142,30 +132,42 @@ where
             Err(e) => Err(e),
         }
     }
+
+    pub fn time_since_last_update(&self) -> Option<std::time::Duration> {
+        self.value.as_ref().map(|v| v.time_since_last_update())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{time::Duration, sync::atomic::{AtomicU8, AtomicBool, Ordering}};
 
     use futures::future::ready;
 
     use super::*;
-    use crate::{async_fn, async_fold, sync::async_fn::AsyncFold};
+    use crate::async_fn;
 
     #[tokio::test]
     async fn test_peek_empty() {
         type Fut = EverReady<i32>;
-        type M = MnemoSync<i32, Infallible, Fut, AsyncFn<i32, Infallible, Fut>>;
-        let mnemo: M = MnemoSync::new(None, 1000, async_fn!(|| ready(Ok(13))));
+        type M = MnemoSync<i32, Infallible, AsyncFn<i32, Infallible, Fut>>;
+        let mnemo: M = MnemoSync::new(
+            None,
+            1000,
+            async_fn!(|| ready(Ok(13)))
+        );
         assert_eq!(mnemo.peek(), None);
     }
 
     #[tokio::test]
     async fn test_peek_non_empty() {
         type Fut = EverReady<&'static str>;
-        type M = MnemoSync<&'static str, Infallible, Fut, AsyncFn<&'static str, Infallible, Fut>>;
-        let mut mnemo = M::new(Some("foo"), 1000, async_fn!(|| ready(Ok("bar"))));
+        type M = MnemoSync<&'static str, Infallible, AsyncFn<&'static str, Infallible, Fut>>;
+        let mut mnemo = M::new(
+            Some("foo"),
+            1000,
+            async_fn!(|| ready(Ok("bar")))
+        );
         assert_eq!(mnemo.peek(), Some("foo"));
         std::thread::sleep(std::time::Duration::from_millis(2000));
         mnemo.poll_async().await.unwrap();
@@ -174,18 +176,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_peek_same_as_last_poll() {
-        let f = async_fold!(3u8, move |x| {
-            if *x == 0 {
-                ready(Err(()))
-            } else {
-                let ret = *x;
-                *x -= 1;
-                ready(Ok(ret))
+        struct Countdown {
+            count: AtomicU8,
+            _done: AtomicBool,
+        }
+        impl Countdown {
+            fn new(count: u8) -> Self {
+                Self { count: AtomicU8::new(count), _done: AtomicBool::new(false) }
             }
-        });
-        type Fut = EverReady<u8, ()>;
-        type M = MnemoSync<u8, (), Fut, AsyncFold<u8, u8, (), Fut>>;
-        let mut mnemo = M::new(Some(3u8), 100, f);
+        }
+        impl<'a> AsyncClosure<'a, u8, ()> for Countdown {
+            type Fut = EverReady<u8, ()>;
+
+            fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut where 'c: 'a {
+                // Once self.count reaches 0, we should always return an error
+                // self._done starts at false and is set to true once count reaches 0
+                // regardless of what count is, if _done is true, we should return an error
+                // otherwise, we decrement count and return the old value
+                if self._done.load(Ordering::SeqCst) {
+                    return ready(Err(()));
+                }
+
+                let count = self.count.fetch_sub(1, Ordering::SeqCst);
+                if count == 0 {
+                    self._done.store(true, Ordering::SeqCst);
+                }
+                ready(Ok(count))
+            }
+        }
+
+
+        type M = MnemoSync<u8, (), Countdown>;
+        let f = Countdown::new(3);
+        let mut mnemo = M::new(None, 100, f);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(matches!(mnemo.poll_async().await, Ok(3)));
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -206,7 +229,7 @@ mod tests {
             ready(Ok(ret))
         });
         type Fut = EverReady<i32>;
-        type M = MnemoSync<i32, Infallible, Fut, AsyncFn<i32, Infallible, Fut>>;
+        type M = MnemoSync<i32, Infallible, AsyncFn<i32, Infallible, Fut>>;
         let mut mnem = M::new(Some(42), 2000, f);
         assert_eq!(mnem.peek(), Some(42));
         std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -226,7 +249,7 @@ mod tests {
             ready(ret)
         });
         type Fut = EverReady<i32, ()>;
-        type M = MnemoSync<i32, (), Fut, AsyncFn<i32, (), Fut>>;
+        type M = MnemoSync<i32, (), AsyncFn<i32, (), Fut>>;
         let mut mnem = M::new(None, 0, f);
         for i in 0..10 {
             let j = 2 * i + 1;
