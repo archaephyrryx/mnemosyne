@@ -15,7 +15,7 @@ pub struct AsyncFn<T, E, Fut>
 where
     Fut: Future<Output = Result<T, E>> + Send + Sync,
 {
-    _inner: std::pin::Pin<Box<dyn (FnMut() -> Fut) + Sync + Send + 'static + Unpin>>,
+    inner: std::pin::Pin<Box<dyn (FnMut() -> Fut) + Sync + Send + 'static + Unpin>>,
 }
 
 #[macro_export]
@@ -35,12 +35,12 @@ where
         F: Send + Sync + 'static + Unpin,
     {
         Self {
-            _inner: Box::pin(inner),
+            inner: Box::pin(inner),
         }
     }
 }
 
-impl<'a, 'b, T, E, Fut> AsyncClosure<'a, T, E> for AsyncFn<T, E, Fut>
+impl<'a, T, E, Fut> AsyncClosure<'a, T, E> for AsyncFn<T, E, Fut>
 where
     Fut: Future<Output = Result<T, E>> + Send + Sync + 'a,
 {
@@ -50,6 +50,6 @@ where
     where
         'c: 'a,
     {
-        (self._inner)()
+        (self.inner)()
     }
 }

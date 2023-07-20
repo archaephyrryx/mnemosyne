@@ -1,6 +1,6 @@
 use std::{convert::Infallible, marker::PhantomData, pin::Pin, time::Duration};
 
-use crate::common::TimedContents;
+use crate::common::{TimedContents, self};
 
 pub mod async_fn;
 
@@ -141,7 +141,7 @@ where
     }
 
     pub fn time_since_last_update(&self) -> Option<std::time::Duration> {
-        self.value.as_ref().map(|v| v.time_since_last_update())
+        self.value.as_ref().map(common::TimedContents::time_since_last_update)
     }
 }
 
