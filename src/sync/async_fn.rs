@@ -5,7 +5,9 @@ use futures::Future;
 pub trait AsyncClosure<'a, T, E> {
     type Fut: Future<Output = Result<T, E>> + 'a;
 
-    fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut where 'c: 'a;
+    fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut
+    where
+        'c: 'a;
 }
 
 /// A wrapper around a closure that returns a [`Future`] and can be called more than once, with possible side-effects.
@@ -44,7 +46,10 @@ where
 {
     type Fut = Fut;
 
-    fn call<'c>(mut self: Pin<&'c mut Self>) -> Fut where 'c: 'a {
+    fn call<'c>(mut self: Pin<&'c mut Self>) -> Fut
+    where
+        'c: 'a,
+    {
         (self._inner)()
     }
 }

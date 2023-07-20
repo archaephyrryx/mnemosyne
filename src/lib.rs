@@ -12,5 +12,5 @@ pub(crate) mod common;
 pub mod sync;
 pub mod unsync;
 
-pub use unsync::Mnemosyne;
 pub use sync::MnemoSync;
+pub use unsync::Mnemosyne;

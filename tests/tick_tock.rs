@@ -1,10 +1,13 @@
 #![cfg(test)]
-use std::{sync::{Arc, atomic::Ordering}, pin::Pin};
-use futures::{StreamExt, future::BoxFuture};
-use mnemosyne::{MnemoSync, sync::async_fn::AsyncClosure};
-use tokio::{time::interval, sync::Mutex};
+use futures::{future::BoxFuture, StreamExt};
+use mnemosyne::{sync::async_fn::AsyncClosure, MnemoSync};
+use std::{
+    pin::Pin,
+    sync::{atomic::Ordering, Arc},
+};
+use std::{sync::atomic::AtomicU32, time::Duration};
+use tokio::{sync::Mutex, time::interval};
 use tokio_stream::wrappers::IntervalStream;
-use std::{time::Duration, sync::atomic::AtomicU32};
 
 struct DelayedCallbackCounter {
     count: Arc<AtomicU32>,
@@ -14,7 +17,9 @@ struct DelayedCallbackCounter {
 impl<'a> AsyncClosure<'a, u32, ()> for DelayedCallbackCounter {
     type Fut = BoxFuture<'a, Result<u32, ()>>;
 
-    fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut where 'c: 'a
+    fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut
+    where
+        'c: 'a,
     {
         let this = self.ticker.clone();
         Box::pin(async move {
@@ -25,13 +30,16 @@ impl<'a> AsyncClosure<'a, u32, ()> for DelayedCallbackCounter {
     }
 }
 
-
 #[tokio::test]
 async fn clock_test() {
     let ticker = IntervalStream::new(interval(Duration::from_secs(1)));
     let ticks = Arc::new(AtomicU32::new(0));
-    let dcc = DelayedCallbackCounter { count: ticks.clone(), ticker: Arc::new(Mutex::new(ticker)) };
-    let mut mnemosync : MnemoSync<u32, (), DelayedCallbackCounter> = MnemoSync::new(Some(0), 2000, dcc);
+    let dcc = DelayedCallbackCounter {
+        count: ticks.clone(),
+        ticker: Arc::new(Mutex::new(ticker)),
+    };
+    let mut mnemosync: MnemoSync<u32, (), DelayedCallbackCounter> =
+        MnemoSync::new(Some(0), 2000, dcc);
     let init_val = mnemosync.peek();
     assert_eq!(init_val, Some(0));
     let mut poll_count_total = 0;
@@ -48,7 +56,14 @@ async fn clock_test() {
                     }
                 }
                 let val = mnemosync.peek();
-                assert_eq!(val, Some(poll_count_after_2s), "val: {:?}, poll_count_after_2s: {}, poll_count_total: {}", val, poll_count_after_2s, poll_count_total);
+                assert_eq!(
+                    val,
+                    Some(poll_count_after_2s),
+                    "val: {:?}, poll_count_after_2s: {}, poll_count_total: {}",
+                    val,
+                    poll_count_after_2s,
+                    poll_count_total
+                );
                 if poll_count_after_2s == 5 {
                     break;
                 } else if poll_count_total == 10 {
@@ -72,9 +87,6 @@ async fn clock_test() {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
-
         }
     }
-
-
 }

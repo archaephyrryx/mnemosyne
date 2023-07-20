@@ -1,10 +1,10 @@
-use std::{ convert::Infallible, marker::PhantomData, time::Duration, pin::Pin };
+use std::{convert::Infallible, marker::PhantomData, pin::Pin, time::Duration};
 
 use crate::common::TimedContents;
 
 pub mod async_fn;
 
-use async_fn::{ AsyncClosure, AsyncFn };
+use async_fn::{AsyncClosure, AsyncFn};
 use futures::future::BoxFuture;
 
 pub type EverReady<T, E = Infallible> = futures::future::Ready<Result<T, E>>;
@@ -15,14 +15,21 @@ pub type EverReady<T, E = Infallible> = futures::future::Ready<Result<T, E>>;
 /// refresh period has elapsed.
 #[allow(clippy::module_name_repetitions)]
 pub struct MnemoSync<T, E = Infallible, F = AsyncFn<T, E, BoxFuture<'static, Result<T, E>>>>
-    where E: 'static, F: for<'a> AsyncClosure<'a, T, E> {
+where
+    E: 'static,
+    F: for<'a> AsyncClosure<'a, T, E>,
+{
     value: Option<TimedContents<T>>,
     refresh_interval: Duration,
     update: F,
     _proxy: PhantomData<E>,
 }
 
-impl<T: Clone, E, F> MnemoSync<T, E, F> where E: 'static, F: for<'a> AsyncClosure<'a, T, E> + Unpin {
+impl<T: Clone, E, F> MnemoSync<T, E, F>
+where
+    E: 'static,
+    F: for<'a> AsyncClosure<'a, T, E> + Unpin,
+{
     /// Construct a new [`MnemoSync`] from an optional initial value `init`, with the specified
     /// value-persistence duration (refresh interval) and (async) update-closure.
     ///
@@ -140,7 +147,10 @@ impl<T: Clone, E, F> MnemoSync<T, E, F> where E: 'static, F: for<'a> AsyncClosur
 
 #[cfg(test)]
 mod tests {
-    use std::{time::Duration, sync::atomic::{AtomicU8, AtomicBool, Ordering}};
+    use std::{
+        sync::atomic::{AtomicBool, AtomicU8, Ordering},
+        time::Duration,
+    };
 
     use futures::future::ready;
 
@@ -151,11 +161,7 @@ mod tests {
     async fn test_peek_empty() {
         type Fut = EverReady<i32>;
         type M = MnemoSync<i32, Infallible, AsyncFn<i32, Infallible, Fut>>;
-        let mnemo: M = MnemoSync::new(
-            None,
-            1000,
-            async_fn!(|| ready(Ok(13)))
-        );
+        let mnemo: M = MnemoSync::new(None, 1000, async_fn!(|| ready(Ok(13))));
         assert_eq!(mnemo.peek(), None);
     }
 
@@ -163,11 +169,7 @@ mod tests {
     async fn test_peek_non_empty() {
         type Fut = EverReady<&'static str>;
         type M = MnemoSync<&'static str, Infallible, AsyncFn<&'static str, Infallible, Fut>>;
-        let mut mnemo = M::new(
-            Some("foo"),
-            1000,
-            async_fn!(|| ready(Ok("bar")))
-        );
+        let mut mnemo = M::new(Some("foo"), 1000, async_fn!(|| ready(Ok("bar"))));
         assert_eq!(mnemo.peek(), Some("foo"));
         std::thread::sleep(std::time::Duration::from_millis(2000));
         mnemo.poll_async().await.unwrap();
@@ -182,13 +184,19 @@ mod tests {
         }
         impl Countdown {
             fn new(count: u8) -> Self {
-                Self { count: AtomicU8::new(count), _done: AtomicBool::new(false) }
+                Self {
+                    count: AtomicU8::new(count),
+                    _done: AtomicBool::new(false),
+                }
             }
         }
         impl<'a> AsyncClosure<'a, u8, ()> for Countdown {
             type Fut = EverReady<u8, ()>;
 
-            fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut where 'c: 'a {
+            fn call<'c>(self: Pin<&'c mut Self>) -> Self::Fut
+            where
+                'c: 'a,
+            {
                 // Once self.count reaches 0, we should always return an error
                 // self._done starts at false and is set to true once count reaches 0
                 // regardless of what count is, if _done is true, we should return an error
@@ -204,7 +212,6 @@ mod tests {
                 ready(Ok(count))
             }
         }
-
 
         type M = MnemoSync<u8, (), Countdown>;
         let f = Countdown::new(3);
